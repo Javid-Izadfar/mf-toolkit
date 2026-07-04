@@ -24,6 +24,11 @@ export interface TraverseLocalModulesOptions {
   tsconfigPath?: string;
   /** Workspace package names/globs to skip (e.g. '@my-org/*'). */
   workspacePackages?: string[];
+  /**
+   * Declared dependency names (package.json). A builtin-named entry that is
+   * also declared is treated as a browser polyfill package, not a node builtin.
+   */
+  knownDependencies?: string[];
 }
 
 /**
@@ -46,6 +51,7 @@ export async function traverseLocalModules(
 ): Promise<PackageOccurrence[]> {
   const extensions = options.extensions ?? DEFAULT_EXTENSIONS;
   const files = await scanFiles(options.sourceDirs, extensions);
+  const knownDeps = new Set(options.knownDependencies ?? []);
 
   // Phase 1: pre-read all files in parallel — turns F sequential disk reads
   // into a single concurrent batch, giving 3-8× speedup on large projects.
@@ -88,7 +94,7 @@ export async function traverseLocalModules(
         continue;
       }
 
-      if (isNodeBuiltin(decl.specifier)) continue;
+      if (isNodeBuiltin(decl.specifier, knownDeps)) continue;
 
       // ── TypeScript path alias → resolve and follow locally ────────────────
       if (tsConfigPaths) {

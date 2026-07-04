@@ -1,0 +1,7 @@
+{
+  "name": "mf-empty-installs",
+  "private": true,
+  "dependencies": {
+    "@mf-fixture/absent": "^1.0.0"
+  }
+}

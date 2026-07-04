@@ -1,0 +1,8 @@
+{
+  "name": "polyfill-mf",
+  "private": true,
+  "dependencies": {
+    "events": "^3.3.0",
+    "react": "^18.2.0"
+  }
+}

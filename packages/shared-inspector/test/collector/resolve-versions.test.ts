@@ -49,20 +49,20 @@ describe('resolveVersions — installed versions', () => {
     expect(installed['mobx']).toBe('6.13.5');
   });
 
-  it('skips packages absent from node_modules (installed stays empty for them)', async () => {
+  it('leaves installed empty for a package not installed anywhere up the tree', async () => {
     const { installed } = await resolveVersions(
       join(FIXTURES, 'resolve-versions/package.json'),
     );
 
-    // react-dom and typescript have no fake node_modules entry
-    expect(installed['react-dom']).toBeUndefined();
-    expect(installed['typescript']).toBeUndefined();
+    // @mf-fixture/absent is declared but installed in no node_modules,
+    // local or hoisted — a ghost name that cannot resolve up to the FS root
+    expect(installed['@mf-fixture/absent']).toBeUndefined();
   });
 
-  it('returns empty installed when node_modules does not exist', async () => {
-    // mf-checkout fixture has no node_modules
+  it('returns empty installed when nothing is installed up the tree', async () => {
+    // fixture declares only a ghost package and has no node_modules of its own
     const { installed } = await resolveVersions(
-      join(FIXTURES, 'mf-checkout/package.json'),
+      join(FIXTURES, 'resolve-versions-empty/package.json'),
     );
 
     expect(installed).toEqual({});
@@ -73,8 +73,27 @@ describe('resolveVersions — installed versions', () => {
       join(FIXTURES, 'resolve-versions/package.json'),
     );
 
-    // installed must NOT copy from declared for missing packages
-    expect(installed['react-dom']).not.toBe(declared['react-dom']);
-    expect(installed['react-dom']).toBeUndefined();
+    // installed must NOT copy from declared for a package that resolves nowhere
+    expect(declared['@mf-fixture/absent']).toBe('^1.0.0');
+    expect(installed['@mf-fixture/absent']).toBeUndefined();
+  });
+});
+
+describe('resolveVersions — hoisted monorepo installs', () => {
+  const SUB_APP = 'resolve-versions-monorepo/packages/sub-app/package.json';
+
+  it('finds a hoisted version from a parent node_modules (npm/yarn workspaces)', async () => {
+    const { installed } = await resolveVersions(join(FIXTURES, SUB_APP));
+
+    // hoisted-lib exists only in the workspace-root node_modules,
+    // not in the sub-package's own node_modules
+    expect(installed['hoisted-lib']).toBe('3.4.5');
+  });
+
+  it('still reads a version from the local node_modules when present', async () => {
+    const { installed } = await resolveVersions(join(FIXTURES, SUB_APP));
+
+    // local node_modules must keep winning — regression guard for the fix
+    expect(installed['local-only']).toBe('1.0.0');
   });
 });

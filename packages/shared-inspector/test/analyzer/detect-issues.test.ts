@@ -246,6 +246,25 @@ describe('detectIssues — deepImportBypass', () => {
     expect(entry.files).toEqual(['src/a.ts', 'src/b.ts']);
   });
 
+  it('counts only files that contain a deep import, not every file of the package', () => {
+    const result = detectIssues(makeInput({
+      resolvedPackages: ['lodash'],
+      packageDetails: [{
+        package: 'lodash',
+        importCount: 3,
+        files: ['src/a.ts', 'src/b.ts', 'src/c.ts'], // lodash used in 3 files
+        via: 'direct',
+        deepImports: ['lodash/get'],
+        deepImportFiles: ['src/c.ts'],               // ...deep-imported only in c
+      }],
+      sharedDeclared: { lodash: { singleton: true } },
+    }));
+
+    const entry = result.deepImportBypass[0];
+    expect(entry.fileCount).toBe(1);
+    expect(entry.files).toEqual(['src/c.ts']);
+  });
+
   it('does not flag when shared package only uses root specifier', () => {
     const result = detectIssues(makeInput({
       resolvedPackages: ['lodash'],

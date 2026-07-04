@@ -147,6 +147,7 @@ export function adaptMf2Manifest(raw: unknown): ProjectManifest {
         files: [],
         via: 'direct' as const,
         deepImports: [],
+        deepImportFiles: [],
       })),
     },
     shared: {

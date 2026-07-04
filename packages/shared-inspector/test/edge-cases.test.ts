@@ -95,6 +95,21 @@ describe('analyzeFederation — version conflict edge cases', () => {
     const remote = makeManifest('remote', { mobx: { requiredVersion: '^2.0.0' } }, ['mobx']);
     expect(analyzeFederation([host, remote]).versionConflicts).toHaveLength(0);
   });
+
+  it('does NOT flag ^16 || ^18 vs ^17 || ^18 (two unions overlapping only at 18.x)', () => {
+    // Both MFs support React 18; they differ only on the legacy major. The
+    // shared version negotiation can pick 18.x, so this is not a conflict.
+    // The old max-of-minVersion heuristic picked 17.0.0 and cried conflict.
+    const host = makeManifest('host', { react: { requiredVersion: '^16.0.0 || ^18.0.0' } }, ['react']);
+    const remote = makeManifest('remote', { react: { requiredVersion: '^17.0.0 || ^18.0.0' } }, ['react']);
+    expect(analyzeFederation([host, remote]).versionConflicts).toHaveLength(0);
+  });
+
+  it('flags ^16 || ^18 vs ^17 (unions with no common major)', () => {
+    const host = makeManifest('host', { react: { requiredVersion: '^16.0.0 || ^18.0.0' } }, ['react']);
+    const remote = makeManifest('remote', { react: { requiredVersion: '^17.0.0' } }, ['react']);
+    expect(analyzeFederation([host, remote]).versionConflicts.map((v) => v.package)).toContain('react');
+  });
 });
 
 // ── duplicate manifest names ──────────────────────────────────────────────────

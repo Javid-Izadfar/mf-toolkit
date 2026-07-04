@@ -13,17 +13,17 @@ const DEFAULT_ALWAYS_SHARED = ['react', 'react-dom'];
 
 /**
  * Returns true when two semver ranges have at least one version in common.
- * Strategy: the max of the two minimums must satisfy both ranges.
- * e.g. ^18.0.0 and ^18.2.0 → max(18.0.0, 18.2.0) = 18.2.0 → satisfies both → compatible.
- * e.g. ^17.0.0 and ^18.0.0 → max(17.0.0, 18.0.0) = 18.0.0 → fails ^17 → conflict.
+ *
+ * Uses semver's exact range-intersection check rather than a min-version
+ * heuristic — the heuristic gave false conflicts on union ranges that overlap
+ * only above their minimums (e.g. `^16 || ^18` vs `^17 || ^18` share 18.x).
+ *
+ * Unparseable ranges (workspace:*, latest, git urls) are treated as
+ * overlapping so they never produce a false conflict.
  */
 function rangesOverlap(a: string, b: string): boolean {
   if (!semver.validRange(a) || !semver.validRange(b)) return true; // unknown → assume ok
-  const minA = semver.minVersion(a);
-  const minB = semver.minVersion(b);
-  if (!minA || !minB) return true;
-  const candidate = semver.gt(minA, minB) ? minA : minB;
-  return semver.satisfies(candidate, a) && semver.satisfies(candidate, b);
+  return semver.intersects(a, b);
 }
 
 /**

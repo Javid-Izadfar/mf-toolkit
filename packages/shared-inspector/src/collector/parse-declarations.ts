@@ -30,9 +30,20 @@ export function isRelativeSpecifier(specifier: string): boolean {
   return specifier.startsWith('./') || specifier.startsWith('../');
 }
 
-export function isNodeBuiltin(specifier: string): boolean {
+export function isNodeBuiltin(
+  specifier: string,
+  knownDependencies?: ReadonlySet<string>,
+): boolean {
+  // An explicit node: prefix is always a builtin, regardless of dependencies.
   if (specifier.startsWith('node:')) return true;
-  return NODE_BUILTINS.has(specifier.split('/')[0]);
+
+  const base = specifier.split('/')[0];
+  if (!NODE_BUILTINS.has(base)) return false;
+
+  // A builtin name that is also a declared dependency is a browser polyfill
+  // package (e.g. `events`, `stream`, `buffer`) — treat it as a real package
+  // so its duplication across MFs stays visible.
+  return knownDependencies?.has(base) ? false : true;
 }
 
 /**
@@ -128,6 +139,42 @@ const REQUIRE_RE = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gm;
 /** Dynamic import with a literal string — import('pkg') */
 const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/gm;
 
+/**
+ * True when a static import/export statement's only bindings are inline
+ * `type` specifiers, e.g. `import { type Foo, type Bar } from 'react'`.
+ *
+ * Such statements are erased by the TS compiler (verbatimModuleSyntax) and
+ * never reach the bundle, so they must not count as a runtime use of the
+ * package — otherwise the package surfaces as a false-positive share candidate.
+ *
+ * A default or namespace binding before the block (`import React, { type FC }`)
+ * is a value import and is kept.
+ */
+function isTypeOnlyStatement(statement: string): boolean {
+  const braceStart = statement.indexOf('{');
+  if (braceStart === -1) return false;
+
+  // Anything between `import`/`export` and `{` is a default/namespace value binding.
+  const head = statement
+    .slice(0, braceStart)
+    .replace(/^\s*(?:import|export)\s*/, '')
+    .replace(/,\s*$/, '')
+    .trim();
+  if (head.length > 0) return false;
+
+  const braceEnd = statement.indexOf('}', braceStart);
+  if (braceEnd === -1) return false;
+
+  const specs = statement
+    .slice(braceStart + 1, braceEnd)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (specs.length === 0) return false;
+
+  return specs.every((s) => /^type\s+/.test(s));
+}
+
 // ─── Main parser ──────────────────────────────────────────────────────────────
 
 /**
@@ -138,17 +185,20 @@ export function parseDeclarations(fileContent: string): Declaration[] {
   const src = normalizeMultiline(stripComments(fileContent));
   const results: Declaration[] = [];
 
-  const patterns: Array<[RegExp, DeclarationKind]> = [
-    [STATIC_IMPORT_RE, 'import'],
-    [REQUIRE_RE, 'import'],
-    [DYNAMIC_IMPORT_RE, 'import'],
-    [REEXPORT_RE, 'reexport'],
+  // `typeAware` patterns carry named-binding blocks that may be inline
+  // type-only; require()/import() take a bare string and never do.
+  const patterns: Array<[RegExp, DeclarationKind, boolean]> = [
+    [STATIC_IMPORT_RE, 'import', true],
+    [REQUIRE_RE, 'import', false],
+    [DYNAMIC_IMPORT_RE, 'import', false],
+    [REEXPORT_RE, 'reexport', true],
   ];
 
-  for (const [pattern, kind] of patterns) {
+  for (const [pattern, kind, typeAware] of patterns) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(src)) !== null) {
+      if (typeAware && isTypeOnlyStatement(match[0])) continue;
       results.push({ specifier: match[1], kind });
     }
   }

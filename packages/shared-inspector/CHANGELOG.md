@@ -9,6 +9,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **`ProjectManifest.usage.packageDetails[].deepImportFiles`** — the subset of
+  `files` that contain at least one deep import of the package, as opposed to
+  `files`, which lists every file the package appears in. Populated by the
+  collector; MF 2.0 manifests set it empty. Additive to schema version 2 —
+  manifests written before this field are still accepted (the detector falls
+  back to `files`).
+
 ### Removed
 
 - **`CollectorOptions.parser` and the `ParserStrategy` type** — the `parser`
@@ -28,6 +37,33 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   neither a `ProjectManifest` nor an MF 2.0 `mf-manifest.json` was cast
   through unchecked. The command now normalises input via `parseManifestInput`
   and exits with a clear error for unrecognised manifests.
+- **Version mismatch was missed under monorepo hoisting.** `resolveVersions`
+  only read the sub-package's own `node_modules`, so with npm/yarn workspace
+  hoisting the installed version was not found and the `mismatched` check was
+  silently skipped. It now walks up the `node_modules` chain like Node's
+  resolver, so hoisted installs are seen.
+- **Inline type-only imports produced false share candidates.**
+  `import { type Foo } from 'react'` (TypeScript `verbatimModuleSyntax`) is
+  erased at compile time and never reaches the bundle, but the parser counted
+  it as a runtime import. Statements whose named bindings are all inline `type`
+  are now ignored; a mixed binding or a default/namespace import is still counted.
+- **Polyfill packages named after node builtins were invisible.** Specifiers
+  such as `events`, `stream`, `buffer` were always treated as node builtins,
+  hiding their cross-MF duplication in browser builds. A builtin-named
+  specifier that is also a declared dependency is now treated as a real
+  package; a `node:`-prefixed specifier is always a builtin.
+- **Deep-import bypass reported the wrong file count and files.** `fileCount`
+  and the file preview counted every file the package appeared in, not the
+  files that actually contained a deep import — inflating the count and
+  sometimes listing files with no deep import. The detector now reports only
+  the files backed by `deepImportFiles`.
+- **False version conflict on overlapping union ranges.** The range-overlap
+  check used a min-version heuristic that flagged e.g. `^16 || ^18` against
+  `^17 || ^18` as conflicting even though both admit 18.x. It now uses
+  `semver.intersects` for an exact intersection check.
+- **Removed a stray NUL byte in `collect-imports.ts`** that made git treat the
+  file as binary. The Map-key delimiter now uses a space, matching
+  `traverse-local-modules`.
 
 ---
 

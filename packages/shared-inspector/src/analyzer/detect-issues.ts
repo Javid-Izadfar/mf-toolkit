@@ -19,6 +19,12 @@ export interface DetectIssuesInput {
     files: string[];
     via: 'direct' | 'reexport';
     deepImports: string[];
+    /**
+     * Subset of `files` that contain at least one deep import of this package.
+     * Optional for backward compatibility with manifests built before this
+     * field existed — the detector falls back to `files` when absent.
+     */
+    deepImportFiles?: string[];
   }>;
   sharedDeclared: Record<string, {
     singleton?: boolean;
@@ -123,11 +129,16 @@ export function detectIssues(input: DetectIssuesInput): DetectIssuesResult {
     );
     if (filtered.length === 0) continue;
 
+    // Report the files that actually contain a deep import — not every file
+    // the package appears in. Fall back to `files` for manifests built before
+    // `deepImportFiles` existed.
+    const deepFiles = detail.deepImportFiles ?? detail.files;
+
     deepImportBypass.push({
       package: pkg,
       specifiers: filtered,
-      fileCount: detail.files.length,
-      files: detail.files.slice(0, DEEP_IMPORT_FILES_PREVIEW),
+      fileCount: deepFiles.length,
+      files: deepFiles.slice(0, DEEP_IMPORT_FILES_PREVIEW),
     });
   }
 

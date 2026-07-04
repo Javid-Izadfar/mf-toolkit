@@ -1,0 +1,8 @@
+{
+  "name": "sub-app",
+  "private": true,
+  "dependencies": {
+    "hoisted-lib": "^3.0.0",
+    "local-only": "^1.0.0"
+  }
+}

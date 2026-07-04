@@ -105,6 +105,12 @@ export interface ProjectManifest {
        * imports listed here bypass shared-scope negotiation at runtime.
        */
       deepImports: string[];
+      /**
+       * Subset of `files` that contain at least one deep import of this package.
+       * Distinct from `files`, which lists every file the package appears in
+       * (root imports included). Empty when `deepImports` is empty.
+       */
+      deepImportFiles: string[];
     }>;
   };
 

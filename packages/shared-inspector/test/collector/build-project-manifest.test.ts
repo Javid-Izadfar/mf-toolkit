@@ -286,3 +286,59 @@ describe('buildProjectManifest — direct vs local-graph', () => {
     expect(manifest.usage.resolvedPackages).toContain('mobx');
   });
 });
+
+// ─── builtin name declared as a dependency (browser polyfill) ─────────────────
+
+describe('buildProjectManifest — builtin name declared as a dependency', () => {
+  const POLYFILL_PKG = join(FIXTURES, 'polyfill-mf/package.json');
+  const POLYFILL_SRC = join(FIXTURES, 'polyfill-mf/src');
+
+  it('surfaces a builtin-named package when it is a declared dependency', async () => {
+    const manifest = await buildProjectManifest({
+      name: 'polyfill-mf',
+      sourceDirs: [POLYFILL_SRC],
+      packageJsonPath: POLYFILL_PKG,
+      depth: 'local-graph',
+    });
+
+    // `events` is declared in package.json → it's a real polyfill package,
+    // its usage (and cross-MF duplication) must be visible
+    expect(manifest.usage.resolvedPackages).toContain('events');
+  });
+
+  it('still skips a builtin that is not a declared dependency', async () => {
+    const manifest = await buildProjectManifest({
+      name: 'polyfill-mf',
+      sourceDirs: [POLYFILL_SRC],
+      packageJsonPath: POLYFILL_PKG,
+      depth: 'local-graph',
+    });
+
+    // `fs` is not declared → stays a node builtin, not a package
+    expect(manifest.usage.resolvedPackages).not.toContain('fs');
+  });
+});
+
+// ─── deepImportFiles — files with a deep import, distinct from all files ───────
+
+describe('buildProjectManifest — deepImportFiles', () => {
+  const DEEP_PKG = join(FIXTURES, 'deep-import-mf/package.json');
+  const DEEP_SRC = join(FIXTURES, 'deep-import-mf/src');
+
+  it('records only the files that contain a deep import, not every file', async () => {
+    const manifest = await buildProjectManifest({
+      name: 'deep-import-mf',
+      sourceDirs: [DEEP_SRC],
+      packageJsonPath: DEEP_PKG,
+      depth: 'direct',
+    });
+
+    const lodash = manifest.usage.packageDetails.find((d) => d.package === 'lodash');
+    expect(lodash).toBeDefined();
+    // lodash appears in both files (root import + deep import)...
+    expect(lodash!.files).toHaveLength(2);
+    // ...but only one file actually deep-imports it
+    expect(lodash!.deepImportFiles).toHaveLength(1);
+    expect(lodash!.deepImportFiles[0]).toContain('deep-user');
+  });
+});
