@@ -10,5 +10,8 @@
     "typeRoots": ["./node_modules/@types", "../../node_modules/@types"],
     "types": []
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Build compiles src only. examples/ (playground), test/, and bench/ are
+  // dev-only and must never land in dist or the published package.
+  "exclude": ["dist", "node_modules", "examples", "test", "bench"]
 }
