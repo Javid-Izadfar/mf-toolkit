@@ -7,6 +7,41 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.1.1] — 2026-07-24
+
+### Fixed
+
+- **Streaming props no longer remounts the remote component.** `createMFEntry`
+  bumped the error-boundary `key` on every `propsChanged`, so React tore down
+  and rebuilt the entire remote subtree on each prop update — discarding the
+  remote's internal state (`useState` / `useRef`), input focus, scroll position,
+  and uncontrolled input values. The boundary is now remounted only after the
+  component has actually crashed (so a recovered component can render again);
+  the normal path is a plain re-render that preserves state. Crash recovery
+  behaviour is unchanged, and there are no API changes.
+
+- **`forwardHostStyles` / `adoptHostStyles` no longer leak stale style clones.**
+  The `MutationObserver` mirrored `<style>` / `<link rel="stylesheet">` elements
+  added to `document.head` but never removed the shadow-root clone when the
+  source element was later removed from head. Removed stylesheets now drop their
+  clone from the shadow root too.
+
+- **Preload cache is now a true LRU.** Eviction dropped the oldest *inserted*
+  entry (FIFO), so a frequently reused loader could be evicted before genuinely
+  stale ones. Reads now move an entry to the most-recently-used end, making
+  eviction follow real access order. Only observable past the 50-entry cap
+  (the inline-loader anti-pattern); stable module-level loaders are unaffected.
+
+### Added
+
+- **`examples/playground/`** — a dev-only Vite harness that verifies, in a real
+  browser, that prop streaming preserves the remote's internal state (a
+  re-render, not a remount). Run with `npm run playground`. Excluded from the
+  `tsc` build and the published package, so it adds nothing to `dist` or the
+  npm tarball.
+
+---
+
 ## [1.1.0] — 2026-06-18
 
 ### Added
