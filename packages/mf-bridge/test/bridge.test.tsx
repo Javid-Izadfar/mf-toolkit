@@ -658,6 +658,40 @@ describe('preloadMF', () => {
     expect(attempt).toBe(2)
     expect(screen.getByTestId('label').textContent).toBe('recovered')
   })
+
+  it('LRU: a recently-used loader survives cache overflow, an untouched one is evicted', async () => {
+    clearPreloadCache()
+    const MAX = 50
+    const counts = new Array(MAX + 1).fill(0)
+    const loaders = counts.map((_, i) => () => {
+      counts[i]++
+      return Promise.resolve(labelRegister)
+    })
+
+    // Fill the cache to capacity: entries 0..49, each fetched once.
+    for (let i = 0; i < MAX; i++) preloadMF(loaders[i])
+    expect(counts.slice(0, MAX).every((c) => c === 1)).toBe(true)
+
+    // Use loader[0] via MFBridgeLazy → cache hit → touch → most-recently-used.
+    const { unmount } = await act(async () =>
+      render(createElement(MFBridgeLazy, { register: loaders[0], props: { text: 'x' } })),
+    )
+
+    // Overflow: inserting entry 50 evicts the least-recently-used entry, which
+    // is now loader[1] (loader[0] was just touched), NOT loader[0].
+    preloadMF(loaders[MAX])
+
+    // loader[0] is still cached — preloadMF is a no-op, loader not called again.
+    preloadMF(loaders[0])
+    expect(counts[0]).toBe(1)
+
+    // loader[1] was evicted — preloadMF re-invokes it.
+    preloadMF(loaders[1])
+    expect(counts[1]).toBe(2)
+
+    act(() => { unmount() })
+    clearPreloadCache()
+  })
 })
 
 // ─── clearPreloadCache ────────────────────────────────────────────────────
@@ -1415,6 +1449,27 @@ describe('forwardHostStyles', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
 
     expect(shadow.querySelector('style[data-test]')).toBeNull()
+  })
+
+  it('removes the clone when the original stylesheet is removed from head', async () => {
+    const cleanup = forwardHostStyles(shadow)
+
+    const style = document.createElement('style')
+    style.setAttribute('data-test', 'true')
+    style.textContent = '.gone { color: purple }'
+    document.head.appendChild(style)
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(shadow.querySelector('style[data-test]')?.textContent).toContain('.gone')
+
+    // Removing the original from head must drop the shadow clone too, otherwise
+    // stale CSS leaks into the shadow root forever.
+    style.remove()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    expect(shadow.querySelector('style[data-test]')).toBeNull()
+
+    cleanup()
   })
 })
 

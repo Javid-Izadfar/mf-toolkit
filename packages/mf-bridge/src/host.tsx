@@ -23,10 +23,13 @@ function dbg(namespace: string, enabled: boolean, event: string, ...data: unknow
 
 // ─── Preload cache ────────────────────────────────────────────────────────────
 
-// Bounded LRU cap. Most apps use a handful of stable loader refs defined at
+// Bounded LRU cache. Most apps use a handful of stable loader refs defined at
 // module scope, but inline loaders (anti-pattern, but happens in practice) can
-// leak the cache indefinitely. When full, the oldest entry is evicted — its
-// in-flight promise keeps running, just no longer shared with new requesters.
+// leak the cache indefinitely. Both insertion and access move an entry to the
+// most-recently-used end (a Map preserves insertion order; touchPreloadCache
+// re-inserts on read), so when full the genuinely least-recently-used entry is
+// evicted — its in-flight promise keeps running, just no longer shared with new
+// requesters.
 const PRELOAD_CACHE_MAX = 50
 const preloadCache = new Map<
   () => Promise<RegisterFn<any>>,
@@ -50,6 +53,18 @@ function setPreloadCache(
   promise.catch(() => {
     if (preloadCache.get(loader) === promise) preloadCache.delete(loader)
   })
+}
+
+// Move an entry to the most-recently-used end. A Map iterates in insertion
+// order, so deleting and re-inserting makes eviction (which drops the first
+// key) a true LRU policy instead of plain FIFO — a frequently reused loader is
+// not evicted before genuinely stale ones.
+function touchPreloadCache(
+  loader: () => Promise<RegisterFn<any>>,
+  promise: Promise<RegisterFn<any>>,
+): void {
+  preloadCache.delete(loader)
+  preloadCache.set(loader, promise)
 }
 
 
@@ -144,10 +159,33 @@ export function clearPreloadCache(loader?: () => Promise<RegisterFn<any>>): void
 export function forwardHostStyles(shadowRoot: ShadowRoot): () => void {
   if (typeof document === 'undefined') return () => {}
 
+  // Track original head node → shadow clone so a stylesheet later removed from
+  // document.head can have its clone removed too, instead of leaking stale CSS
+  // into the shadow root.
+  const clones = new Map<Node, ChildNode>()
+
+  const isStyleNode = (node: Node): boolean =>
+    node instanceof HTMLStyleElement ||
+    (node instanceof HTMLLinkElement && node.rel === 'stylesheet')
+
+  const addClone = (el: Node): void => {
+    const clone = el.cloneNode(true) as ChildNode
+    clones.set(el, clone)
+    shadowRoot.appendChild(clone)
+  }
+
+  const removeClone = (el: Node): void => {
+    const clone = clones.get(el)
+    if (clone) {
+      clone.remove()
+      clones.delete(el)
+    }
+  }
+
   // Clone existing <style> and <link rel="stylesheet"> elements.
   document.head
     .querySelectorAll<HTMLElement>('style, link[rel="stylesheet"]')
-    .forEach((el) => shadowRoot.appendChild(el.cloneNode(true)))
+    .forEach(addClone)
 
   // Share adoptedStyleSheets — CSSStyleSheet objects are live so mutations
   // (e.g. emotion speedy mode updating rules) are reflected immediately.
@@ -158,22 +196,24 @@ export function forwardHostStyles(shadowRoot: ShadowRoot): () => void {
     ]
   }
 
-  // Watch for stylesheets injected after mount (lazy CSS-in-JS, dynamic imports).
+  // Watch document.head: mirror stylesheets injected after mount (lazy
+  // CSS-in-JS, dynamic imports) and drop the clone when one is removed later.
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      Array.from(mutation.addedNodes).forEach((node) => {
-        if (
-          node instanceof HTMLStyleElement ||
-          (node instanceof HTMLLinkElement && node.rel === 'stylesheet')
-        ) {
-          shadowRoot.appendChild(node.cloneNode(true))
-        }
+      mutation.addedNodes.forEach((node) => {
+        if (isStyleNode(node)) addClone(node)
+      })
+      mutation.removedNodes.forEach((node) => {
+        if (clones.has(node)) removeClone(node)
       })
     }
   })
   observer.observe(document.head, { childList: true })
 
-  return () => observer.disconnect()
+  return () => {
+    observer.disconnect()
+    clones.clear()
+  }
 }
 
 // ─── SSR hydration bridge ─────────────────────────────────────────────────────
@@ -881,6 +921,8 @@ export function MFBridgeLazy<T extends () => Promise<RegisterFn<any>>>({
       if (attempt === 1 && retryKey === 0) {
         const cached = preloadCache.get(register)
         if (cached) {
+          // Mark as most-recently-used so a hot loader survives eviction.
+          touchPreloadCache(register as () => Promise<RegisterFn<any>>, cached)
           promise = cached
         } else {
           promise = register() as Promise<RegisterFn<any>>

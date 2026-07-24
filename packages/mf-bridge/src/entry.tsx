@@ -167,9 +167,18 @@ export function createMFEntry<T extends ComponentType<any>>(
       props,
     })
 
-    // errorKey increments on every propsChanged to reset the boundary so a
-    // recovered component can render again after a previous crash.
+    // The error boundary is remounted (via a fresh key) ONLY after the component
+    // actually crashed, so the next propsChanged gives a recovered component a
+    // clean boundary to render into. In the normal path the key stays constant,
+    // so a prop update is a plain re-render — the remote component keeps its
+    // internal state, focus, scroll position, and uncontrolled input values
+    // instead of being torn down and rebuilt on every update.
     let errorKey = 0
+    let hasCrashed = false
+    const handleBoundaryError = (err: Error): void => {
+      hasCrashed = true
+      onError?.(err)
+    }
 
     // Pick the registry key — shadowRoot when CSS isolation is enabled, the
     // outer mountPointer otherwise — and reuse an existing root if one is
@@ -201,14 +210,23 @@ export function createMFEntry<T extends ComponentType<any>>(
 
     function render(p: ComponentProps<T>): void {
       root.render(
-        createElement(MFEntryErrorBoundary, { key: errorKey, onError }, createElement(Component, p)),
+        createElement(
+          MFEntryErrorBoundary,
+          { key: errorKey, onError: handleBoundaryError },
+          createElement(Component, p),
+        ),
       )
     }
 
     render(props)
 
     const unsubscribe = bus.on<ComponentProps<T>>('propsChanged', (newProps) => {
-      errorKey++
+      // Only force a fresh boundary instance when the previous render crashed;
+      // otherwise re-render in place so the component keeps its state.
+      if (hasCrashed) {
+        errorKey++
+        hasCrashed = false
+      }
       render(newProps)
       emitDev({ kind: 'props', id: devtoolsId, ts: Date.now(), props: newProps })
     })

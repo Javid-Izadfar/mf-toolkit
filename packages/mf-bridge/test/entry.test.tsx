@@ -210,6 +210,38 @@ describe('createMFEntry', () => {
     vi.restoreAllMocks()
   })
 
+  it('preserves internal component state across propsChanged (re-render, not remount)', async () => {
+    // A remote component with its own state, independent of the streamed props.
+    function Stateful({ label }: { label: string }) {
+      const [clicks, setClicks] = useState(0)
+      return createElement(
+        'button',
+        { 'data-testid': 'btn', onClick: () => setClicks((c) => c + 1) },
+        `${label}:${clicks}`,
+      )
+    }
+
+    const register = createMFEntry(Stateful)
+
+    await act(async () => {
+      register({ mountPointer: mountPoint, props: { label: 'v1' } })
+    })
+
+    // Bump internal state three times.
+    const btn = mountPoint.querySelector('[data-testid="btn"]') as HTMLButtonElement
+    await act(async () => { btn.click(); btn.click(); btn.click() })
+    expect(mountPoint.querySelector('[data-testid="btn"]')?.textContent).toBe('v1:3')
+
+    // Stream a new prop. Internal click-count MUST survive — a prop update is a
+    // re-render, not a remount.
+    const bus = new DOMEventBus(mountPoint, 'mfbridge')
+    await act(async () => {
+      bus.send('propsChanged', { label: 'v2' })
+    })
+
+    expect(mountPoint.querySelector('[data-testid="btn"]')?.textContent).toBe('v2:3')
+  })
+
   it('resets error boundary on next propsChanged so a recovered component can re-render', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
