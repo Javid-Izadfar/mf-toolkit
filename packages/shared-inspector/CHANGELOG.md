@@ -7,7 +7,44 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [1.0.0] — 2026-07-24
+
+First stable release. The public API — the two-phase `buildProjectManifest` +
+`analyzeProject`, `analyzeFederation`, the `inspect` shortcut, the reporters and
+scoring, the webpack plugin, the browser entry, and the `ProjectManifest`
+schema v2 — is now considered stable under semver.
+
+### Fixed
+
+- **Version mismatch is now detected for `peerDependencies` (and
+  `optionalDependencies`).** `resolveVersions` read only `dependencies` and
+  `devDependencies`, so a library-style remote that declares e.g. `react` as a
+  peer dep only had its installed version never looked up — the flagship
+  mismatch check was silently skipped for a common, legitimate config. All four
+  dependency fields are now read (an explicit `dependencies` / `devDependencies`
+  range still wins on conflict). Affects the CLI and the webpack plugin.
+
+- **`--tsconfig` / `tsconfigPath` now handles `extends` chains and JSONC.**
+  `loadTsConfigPaths` stripped only `//` line comments and did no `extends`
+  resolution, so a tsconfig with a block comment, a trailing comma, or — most
+  commonly — `paths` defined in an extended base config parsed to `null`, and
+  alias resolution was silently disabled, hiding every package reachable behind
+  an alias (false negatives across `candidates`, `deepImportBypass`, `unused`).
+  It now tolerates JSONC and walks the `extends` chain (relative and best-effort
+  `node_modules`), with cycle protection.
+
+- **`analyzeFederation`'s `alwaysShared` now extends the built-in list** instead
+  of replacing it, matching the project-side `mergePolicy`. Passing a custom
+  `alwaysShared` no longer silently drops the default react/react-dom protection
+  and reports them as false `hostGaps`.
+
+- **`node_modules` / `dist` / `build` are now excluded on Windows.** The ignore
+  filter split scanned paths on `/` only, but `readdir({ recursive: true })`
+  returns backslash-separated paths on Windows, so nested ignored directories
+  were scanned there (perf hit + polluted results). It now splits on both
+  separators.
+
+---
 
 ## [0.9.0] — 2026-07-04
 
