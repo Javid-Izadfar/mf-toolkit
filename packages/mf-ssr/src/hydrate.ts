@@ -1,17 +1,26 @@
 import { createElement, type ComponentType } from 'react'
-import { hydrateRoot } from 'react-dom/client'
+import { hydrateRoot, type Root } from 'react-dom/client'
 import type { HydrateRemoteOpts } from './types.js'
 
+/**
+ * Hydrates every server-rendered fragment matched by the selector.
+ *
+ * Returns a teardown function that unmounts all roots it created — call it when
+ * the fragments are removed from the DOM (client-side route change, dynamic
+ * remove) to release React state and listeners. Safe to call in SSR / non-DOM
+ * environments: returns a no-op teardown.
+ */
 export function hydrateRemote<P extends object>(
   Component: ComponentType<P>,
   opts?: HydrateRemoteOpts,
-): void {
-  if (typeof document === 'undefined') return
+): () => void {
+  if (typeof document === 'undefined') return () => {}
 
   const selector = opts?.selector
     ?? (opts?.id ? `[data-mf-ssr="${opts.id}"]` : '[data-mf-ssr]')
 
   const wrappers = document.querySelectorAll(selector)
+  const roots: Root[] = []
 
   for (const wrapper of wrappers) {
     const propsEl = wrapper.querySelector('script[data-mf-props]')
@@ -34,6 +43,10 @@ export function hydrateRemote<P extends object>(
       }
     }
 
-    hydrateRoot(appEl as HTMLElement, createElement(Component, props))
+    roots.push(hydrateRoot(appEl as HTMLElement, createElement(Component, props)))
+  }
+
+  return () => {
+    for (const root of roots) root.unmount()
   }
 }

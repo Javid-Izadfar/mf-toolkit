@@ -26,9 +26,13 @@ export interface CreateMFReactFragmentOpts {
    */
   vary?: string
   /**
-   * Called when the fragment cannot be produced — either the `?props=` query
-   * is malformed JSON (the fragment still renders with empty props) or the
-   * component throws during server render (a `500` response is returned).
+   * Called when the fragment cannot be produced. Fires for:
+   * - a malformed `?props=` query (the fragment still renders with empty props),
+   * - a component throw during the shell render (a `500` response is returned),
+   * - an error thrown *after* the shell has flushed, inside a streamed Suspense
+   *   boundary (the already-sent shell cannot become a 500, but the error is no
+   *   longer swallowed).
+   *
    * Use for error observability (Sentry, DataDog, etc.).
    */
   onError?: (error: Error) => void
@@ -77,18 +81,27 @@ export function createMFReactFragment<P extends object>(
     }
 
     try {
-      const stream = await renderToReadableStream(createElement(FragmentShell))
+      const stream = await renderToReadableStream(createElement(FragmentShell), {
+        // Fires for the shell error (which also rejects the await below and
+        // becomes a 500) AND for errors thrown after the shell flushed inside a
+        // streamed Suspense boundary — those never reject, so without this they
+        // were silently swallowed. Reporting here covers both; the catch block
+        // only maps a shell failure to a 500 and does not double-report.
+        onError(error) {
+          opts?.onError?.(error instanceof Error ? error : new Error(String(error)))
+        },
+      })
       const headers: Record<string, string> = {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': cacheControl,
       }
       if (opts?.vary) headers['Vary'] = opts.vary
       return new Response(stream, { headers })
-    } catch (err) {
-      // Shell render threw before the first flush — surface it and return a
-      // 500 instead of letting the handler's promise reject (which would crash
-      // the remote's request handler or leak a stack trace to the client).
-      opts?.onError?.(err instanceof Error ? err : new Error(String(err)))
+    } catch {
+      // Shell render threw before the first flush — already reported via the
+      // onError option above. Return a 500 instead of letting the handler's
+      // promise reject (which would crash the remote's request handler or leak
+      // a stack trace to the client).
       return new Response('Internal Server Error', {
         status: 500,
         headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },

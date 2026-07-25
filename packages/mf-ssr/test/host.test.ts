@@ -608,3 +608,111 @@ describe('preloadFragment', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
+
+// ─── ttl (A3) ─────────────────────────────────────────────────────────────────
+
+describe('fragment cache ttl', () => {
+  it('serves from cache within ttl, re-fetches once ttl elapses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, text: () => Promise.resolve(FRAG_HTML),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    preloadFragment('http://ttl/', { n: 1 }, { ttl: 40 })
+    await act(async () => {})
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Within ttl → cached, no new fetch.
+    preloadFragment('http://ttl/', { n: 1 }, { ttl: 40 })
+    await act(async () => {})
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // After ttl → stale, re-fetch.
+    await new Promise((r) => setTimeout(r, 55))
+    preloadFragment('http://ttl/', { n: 1 }, { ttl: 40 })
+    await act(async () => {})
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+// ─── loader retry (B2) ──────────────────────────────────────────────────────
+
+describe('MFBridgeSSR — loader retry', () => {
+  it('retries the loader and mounts on a later attempt', async () => {
+    let attempt = 0
+    function Widget() { return createElement('span', { 'data-testid': 'w' }, 'ok') }
+    const loader = () => {
+      attempt++
+      return attempt < 3 ? Promise.reject(new Error('flap')) : Promise.resolve(Widget)
+    }
+
+    const { findByTestId } = render(
+      createElement(MFBridgeSSR, { loader, props: {}, retryCount: 2, retryDelay: 0 }),
+    )
+
+    expect((await findByTestId('w')).textContent).toBe('ok')
+    expect(attempt).toBe(3)
+  })
+})
+
+// ─── onLoad / onStatusChange (B3) ───────────────────────────────────────────
+
+describe('MFBridgeSSR — onLoad / onStatusChange', () => {
+  it('reports loading → ready and calls onLoad once (loader mode)', async () => {
+    const statuses: string[] = []
+    const onLoad = vi.fn()
+    function Widget() { return createElement('span', { 'data-testid': 'w' }, 'x') }
+
+    const { findByTestId } = render(
+      createElement(MFBridgeSSR, {
+        loader: () => Promise.resolve(Widget),
+        props: {},
+        onLoad,
+        onStatusChange: (s) => statuses.push(s),
+      }),
+    )
+
+    await findByTestId('w')
+    expect(statuses).toEqual(['loading', 'ready'])
+    expect(onLoad).toHaveBeenCalledOnce()
+  })
+
+  it('reports loading → error and does not call onLoad when loader rejects', async () => {
+    const statuses: string[] = []
+    const onLoad = vi.fn()
+
+    const { findByTestId } = render(
+      createElement(MFBridgeSSR, {
+        loader: () => Promise.reject(new Error('boom')),
+        props: {},
+        onLoad,
+        onStatusChange: (s) => statuses.push(s),
+        errorFallback: createElement('span', { 'data-testid': 'e' }, 'err'),
+      }),
+    )
+
+    await findByTestId('e')
+    expect(statuses).toEqual(['loading', 'error'])
+    expect(onLoad).not.toHaveBeenCalled()
+  })
+
+  it('reports ready in url mode after the fragment loads', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, text: () => Promise.resolve(FRAG_HTML),
+    }))
+    const statuses: string[] = []
+
+    const { findByText } = render(
+      createElement(MFBridgeSSR, {
+        url: 'http://frag/',
+        props: { n: 1 },
+        namespace: 'status-ns',
+        onStatusChange: (s) => statuses.push(s),
+      }),
+    )
+
+    await findByText('content')
+    expect(statuses.at(-1)).toBe('ready')
+    expect(statuses.filter((s) => s === 'ready')).toHaveLength(1)
+  })
+})

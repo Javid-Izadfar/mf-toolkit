@@ -125,4 +125,25 @@ describe('hydrateRemote', () => {
     hydrateRemote(W, { id: 'nonexistent' })
     expect(hydrateRoot).not.toHaveBeenCalled()
   })
+
+  it('returns a teardown that unmounts every hydrated root', () => {
+    const unmount = vi.fn()
+    ;(hydrateRoot as unknown as ReturnType<typeof vi.fn>).mockReturnValue({ unmount })
+    setupDOM('a', '{"n":1}', '')
+    setupDOM('b', '{"n":2}', '')
+    function W({ n }: { n: number }) { return createElement('span', null, String(n)) }
+
+    const teardown = hydrateRemote(W)
+    expect(typeof teardown).toBe('function')
+    expect(hydrateRoot).toHaveBeenCalledTimes(2)
+
+    teardown()
+    expect(unmount).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns a no-op teardown when no wrappers match (safe to call)', () => {
+    function W() { return null }
+    const teardown = hydrateRemote(W, { id: 'nope' })
+    expect(() => teardown()).not.toThrow()
+  })
 })

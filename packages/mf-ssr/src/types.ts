@@ -2,6 +2,9 @@ import type { ComponentType, ReactNode } from 'react'
 
 export type MFFragmentHandler = (req: Request) => Promise<Response>
 
+/** Load status reported by {@link MFBridgeSSRProps.onStatusChange}. */
+export type MFBridgeSSRStatus = 'loading' | 'ready' | 'error'
+
 /**
  * Utility type for type-safe `onEvent` handlers on the host side.
  *
@@ -38,6 +41,18 @@ interface MFBridgeSSRBaseProps<P extends object> {
    * integration. Keep off in production.
    */
   debug?: boolean
+  /** Called once the fragment/component has loaded and is ready on the client. */
+  onLoad?: () => void
+  /**
+   * Called on every load-status transition:
+   * - `'loading'` — the client is fetching / importing the remote (fallback shown).
+   * - `'ready'`   — the remote loaded and mounted.
+   * - `'error'`   — the fetch/loader failed (error boundary shown).
+   *
+   * Use to drive spinners, metrics, or a store — e.g.
+   * `onStatusChange={(s) => dispatch({ type: 'MF_STATUS', status: s })}`.
+   */
+  onStatusChange?: (status: MFBridgeSSRStatus) => void
 }
 
 /** Approach 1: remote exposes an HTTP fragment endpoint. */
@@ -90,6 +105,14 @@ interface MFBridgeSSRUrlProps<P extends object> extends MFBridgeSSRBaseProps<P> 
    * Has no effect when `retryCount` is 0.
    */
   retryDelay?: number
+  /**
+   * Cache TTL for the fetched fragment HTML, in milliseconds. After this window
+   * the cached entry is stale and the next render re-fetches. Default: undefined
+   * (never expires; entries are evicted only by LRU capacity or
+   * `clearFragmentCache`). Useful on long-lived SSR/edge servers serving public,
+   * periodically-changing fragments.
+   */
+  ttl?: number
 }
 
 /** Approach 2: host imports the component directly (S3/CDN remote, no extra server). */
@@ -101,8 +124,15 @@ interface MFBridgeSSRLoaderProps<P extends object> extends MFBridgeSSRBaseProps<
   commandRef?: never
   fetchOptions?: never
   cacheKey?: never
-  retryCount?: never
-  retryDelay?: never
+  ttl?: never
+  /**
+   * Number of additional import attempts after the first failure. Default: 0.
+   * Each attempt re-invokes the loader and is bounded by `timeout`. Pair with
+   * `retryDelay` to avoid hammering a failing CDN.
+   */
+  retryCount?: number
+  /** Milliseconds to wait between loader retry attempts. Default: 1000. */
+  retryDelay?: number
 }
 
 export type MFBridgeSSRProps<P extends object = object> =

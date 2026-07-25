@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createElement } from 'react'
+import { createElement, Suspense } from 'react'
 import { createMFReactFragment } from '../src/react-fragment.js'
 
 function makeRequest(props?: unknown): Request {
@@ -100,6 +100,39 @@ describe('createMFReactFragment', () => {
     expect(scriptBlock).not.toContain('\u2029')
     expect(scriptBlock).toContain('\\u2028')
     expect(scriptBlock).toContain('\\u2029')
+  })
+})
+
+describe('createMFReactFragment — progressive streaming', () => {
+  it('streams a component that suspends: shell fallback + streamed-in content', async () => {
+    let resolve!: () => void
+    const gate = new Promise<void>((r) => { resolve = r })
+    let ready = false
+
+    function Async() {
+      if (!ready) throw gate // suspend until resolved
+      return createElement('span', null, 'streamed-content')
+    }
+    function Widget() {
+      return createElement(
+        Suspense,
+        { fallback: createElement('span', null, 'frag-fallback') },
+        createElement(Async),
+      )
+    }
+
+    const handler = createMFReactFragment(Widget)
+    const res = await handler(makeRequest())
+    // Shell is flushed with the fallback; now resolve so the boundary streams in.
+    ready = true
+    resolve()
+
+    const html = await bodyText(res)
+    // Both the shell fallback and the streamed content are present — the
+    // Web Streams renderer streams Suspense boundaries progressively.
+    expect(html).toContain('frag-fallback')
+    expect(html).toContain('streamed-content')
+    expect(res.status).toBe(200)
   })
 })
 

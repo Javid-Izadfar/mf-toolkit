@@ -5,6 +5,7 @@ import {
   Suspense,
   createElement,
   lazy,
+  useCallback,
   useEffect,
   useRef,
   type ComponentType,
@@ -14,7 +15,7 @@ import {
 } from 'react'
 import { DOMEventBus } from '@mf-toolkit/mf-bridge'
 import { emitDev, nextDevtoolsId } from './_devtools.js'
-import type { MFBridgeSSRProps } from './types.js'
+import type { MFBridgeSSRProps, MFBridgeSSRStatus } from './types.js'
 import { safeJsonStringify } from './utils.js'
 
 // ─── Error boundary ──────────────────────────────────────────────────────────
@@ -69,18 +70,25 @@ interface UrlModeProps<P extends object> {
   timeout: number
   fetchOptions?: Omit<RequestInit, 'signal'>
   cacheKey?: string
+  ttl?: number
   retryCount?: number
   retryDelay?: number
   debug?: boolean
   onEvent?: (type: string, payload: unknown) => void
   commandRef?: { current: ((type: string, payload?: unknown) => void) | null }
+  /** Fired once the fragment has loaded and the wrapper has mounted (client). */
+  onReady?: () => void
 }
 
 interface LoaderModeProps<P extends object> {
   loader: () => Promise<ComponentType<P>>
   props: P
   timeout: number
+  retryCount?: number
+  retryDelay?: number
   debug?: boolean
+  /** Fired once the imported component has loaded and mounted (client). */
+  onReady?: () => void
 }
 
 // Guard against payloads that exceed typical CDN / reverse-proxy URL limits.
@@ -166,7 +174,13 @@ function fetchFragmentHtml<P>(
 // For server longevity: size is capped at FRAGMENT_CACHE_MAX. To clear stale
 // rejected entries (e.g. after a remote recovers), call clearFragmentCache().
 const FRAGMENT_CACHE_MAX = 50
-const fragmentCache = new Map<string, TaggedPromise<string>>()
+
+interface FragmentCacheEntry {
+  promise: TaggedPromise<string>
+  /** Epoch ms when the entry was created — used for optional TTL expiry. */
+  at: number
+}
+const fragmentCache = new Map<string, FragmentCacheEntry>()
 
 /** @internal Test-only: reset the url-mode fetch and loader caches between test cases. */
 export function __clearFragmentCache(): void {
@@ -207,15 +221,28 @@ export function clearFragmentCache<P extends object>(
 
 interface GetFragmentOpts extends FetchOpts {
   cacheKey?: string
+  /** Cache TTL in ms; entries older than this are re-fetched. Undefined = never. */
+  ttl?: number
 }
 
 function getFragmentHtml<P>(
   url: string, initialProps: P, timeout: number, opts: GetFragmentOpts = {},
 ): TaggedPromise<string> {
-  const { cacheKey, ...fetchOpts } = opts
+  const { cacheKey, ttl, ...fetchOpts } = opts
   const key = `${url}?${safeJsonStringify(initialProps)}#${timeout}#${cacheKey ?? ''}`
   const cached = fragmentCache.get(key)
-  if (cached) return cached
+  if (cached) {
+    const fresh = ttl === undefined || Date.now() - cached.at < ttl
+    if (fresh) {
+      // LRU touch: re-insert so the accessed entry moves to the most-recently-
+      // used end and eviction (which drops the first key) is a true LRU policy.
+      fragmentCache.delete(key)
+      fragmentCache.set(key, cached)
+      return cached.promise
+    }
+    // TTL elapsed → drop the stale entry and re-fetch below.
+    fragmentCache.delete(key)
+  }
 
   if (fragmentCache.size >= FRAGMENT_CACHE_MAX) {
     fragmentCache.delete(fragmentCache.keys().next().value as string)
@@ -227,7 +254,7 @@ function getFragmentHtml<P>(
   // synchronously — don't cache them so the app can fix props and retry.
   if (promise._status === 'rejected') return promise
 
-  fragmentCache.set(key, promise)
+  fragmentCache.set(key, { promise, at: Date.now() })
   return promise
 }
 
@@ -254,8 +281,8 @@ export function preloadFragment<P extends object>(
 }
 
 function UrlMode<P extends object>({
-  url, props, namespace, timeout, fetchOptions, cacheKey,
-  retryCount, retryDelay, debug, onEvent, commandRef,
+  url, props, namespace, timeout, fetchOptions, cacheKey, ttl,
+  retryCount, retryDelay, debug, onEvent, commandRef, onReady,
 }: UrlModeProps<P>): ReactElement {
   // Use the props from the very first render as the "initial" fetch key. Once
   // the fiber commits, useRef preserves it across updates. Before commit,
@@ -268,10 +295,11 @@ function UrlMode<P extends object>({
   const isFirstPropsEffect = useRef(true)
   const onEventRef = useRef(onEvent); onEventRef.current = onEvent
   const commandRefRef = useRef(commandRef); commandRefRef.current = commandRef
+  const onReadyRef = useRef(onReady); onReadyRef.current = onReady
 
   const html = readPromise(
     getFragmentHtml(url, initialPropsRef.current, timeout, {
-      fetchOptions, cacheKey, retryCount, retryDelay, debug,
+      fetchOptions, cacheKey, ttl, retryCount, retryDelay, debug,
     }),
   )
 
@@ -289,6 +317,8 @@ function UrlMode<P extends object>({
       props: initialPropsRef.current,
       url,
     })
+    // Committing here means the fragment resolved and mounted → ready.
+    onReadyRef.current?.()
     return () => {
       mfLog(debug, 'url-mode unmounted', { url, namespace })
       emitDev({ kind: 'unmount', id, ts: Date.now() })
@@ -366,6 +396,8 @@ const lazyCache = new Map<
 function getLazy<P extends object>(
   loader: () => Promise<ComponentType<P>>,
   timeout: number,
+  retryCount = 0,
+  retryDelay = 1000,
 ): LazyExoticComponent<ComponentType<P>> {
   const key = loader as unknown as () => Promise<ComponentType<object>>
   const cached = lazyCache.get(key)
@@ -375,7 +407,8 @@ function getLazy<P extends object>(
     lazyCache.delete(lazyCache.keys().next().value as () => Promise<ComponentType<object>>)
   }
 
-  const created = lazy<ComponentType<P>>(() => {
+  // One import attempt, bounded by `timeout`.
+  const attemptImport = (): Promise<{ default: ComponentType<P> }> => {
     let timerId: ReturnType<typeof setTimeout> | undefined
     return Promise.race([
       loader().then((C) => ({ default: C })),
@@ -386,14 +419,33 @@ function getLazy<P extends object>(
         )
       }),
     ]).finally(() => clearTimeout(timerId)) as Promise<{ default: ComponentType<P> }>
+  }
+
+  const created = lazy<ComponentType<P>>(async () => {
+    let lastErr: unknown
+    // 1 initial attempt + retryCount retries, each bounded by `timeout`.
+    for (let attempt = 0; attempt <= retryCount; attempt++) {
+      if (attempt > 0 && retryDelay > 0) {
+        await new Promise<void>((r) => setTimeout(r, retryDelay))
+      }
+      try {
+        return await attemptImport()
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    throw lastErr
   })
   lazyCache.set(key, created as unknown as LazyExoticComponent<ComponentType<object>>)
   return created
 }
 
-function LoaderMode<P extends object>({ loader, props, timeout, debug }: LoaderModeProps<P>): ReactElement {
-  const LazyComp = getLazy(loader, timeout)
+function LoaderMode<P extends object>({
+  loader, props, timeout, retryCount, retryDelay, debug, onReady,
+}: LoaderModeProps<P>): ReactElement {
+  const LazyComp = getLazy(loader, timeout, retryCount, retryDelay)
   const idRef = useRef<string | null>(null)
+  const onReadyRef = useRef(onReady); onReadyRef.current = onReady
   useEffect(() => {
     mfLog(debug, 'loader-mode mounted')
     const id = nextDevtoolsId()
@@ -407,6 +459,8 @@ function LoaderMode<P extends object>({ loader, props, timeout, debug }: LoaderM
       ts: Date.now(),
       props,
     })
+    // Committing here means the import resolved and mounted → ready.
+    onReadyRef.current?.()
     return () => {
       mfLog(debug, 'loader-mode unmounted')
       emitDev({ kind: 'unmount', id, ts: Date.now() })
@@ -459,10 +513,43 @@ function LoaderMode<P extends object>({ loader, props, timeout, debug }: LoaderM
  * />
  */
 export function MFBridgeSSR<P extends object>(props: MFBridgeSSRProps<P>): ReactElement {
-  const { fallback = null, errorFallback = null, timeout = 3000, onError, debug } = props
+  const { fallback = null, errorFallback = null, timeout = 3000, debug } = props
+
+  // Latest-value refs so changing a callback never forces a reload.
+  const onErrorRef = useRef(props.onError); onErrorRef.current = props.onError
+  const onLoadRef = useRef(props.onLoad); onLoadRef.current = props.onLoad
+  const onStatusChangeRef = useRef(props.onStatusChange); onStatusChangeRef.current = props.onStatusChange
+
+  // Single source of truth for status. Deduped, and never regresses to
+  // 'loading' after 'ready'/'error' — this keeps ordering correct whether the
+  // fragment suspends (cold) or renders immediately from a warm cache.
+  const statusRef = useRef<MFBridgeSSRStatus | null>(null)
+  const emitStatus = useCallback((s: MFBridgeSSRStatus) => {
+    if (statusRef.current === s) return
+    if (s === 'loading' && statusRef.current !== null) return
+    statusRef.current = s
+    onStatusChangeRef.current?.(s)
+  }, [])
+
+  const handleReady = useCallback(() => {
+    emitStatus('ready')
+    onLoadRef.current?.()
+  }, [emitStatus])
+  const handleError = useCallback((err: Error) => {
+    emitStatus('error')
+    onErrorRef.current?.(err)
+  }, [emitStatus])
+
+  // Fires on the first commit (fallback shown for a cold load). The status ref
+  // guard drops it if a warm-cache child already reported 'ready'/'error'.
+  useEffect(() => { emitStatus('loading') }, [emitStatus])
 
   const inner = props.loader
-    ? createElement(LoaderMode<P>, { loader: props.loader, props: props.props, timeout, debug })
+    ? createElement(LoaderMode<P>, {
+        loader: props.loader, props: props.props, timeout,
+        retryCount: props.retryCount, retryDelay: props.retryDelay,
+        debug, onReady: handleReady,
+      })
     : createElement(UrlMode<P>, {
         url: props.url,
         props: props.props,
@@ -470,16 +557,18 @@ export function MFBridgeSSR<P extends object>(props: MFBridgeSSRProps<P>): React
         timeout,
         fetchOptions: props.fetchOptions,
         cacheKey: props.cacheKey,
+        ttl: props.ttl,
         retryCount: props.retryCount,
         retryDelay: props.retryDelay,
         debug,
         onEvent: props.onEvent,
         commandRef: props.commandRef,
+        onReady: handleReady,
       })
 
   return createElement(
     MFBridgeSSRErrorBoundary,
-    { fallback: errorFallback ?? fallback, onError },
+    { fallback: errorFallback ?? fallback, onError: handleError },
     createElement(Suspense, { fallback }, inner),
   )
 }
