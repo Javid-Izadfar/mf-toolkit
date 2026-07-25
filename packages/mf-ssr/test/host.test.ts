@@ -80,6 +80,35 @@ describe('MFBridgeSSR — loader mode', () => {
     expect((await findByTestId('display')).textContent).toBe('c')
   })
 
+  it('preserves the remote component internal state across prop updates', async () => {
+    // Remote owns state the host never streams (a click counter). A prop update
+    // must be a re-render, not a remount, or the counter would reset.
+    function Stateful({ label }: { label: string }) {
+      const [n, setN] = useState(0)
+      return createElement(
+        'button',
+        { 'data-testid': 'btn', onClick: () => setN((c) => c + 1) },
+        `${label}:${n}`,
+      )
+    }
+    const loader = () => Promise.resolve(Stateful)
+
+    let setLabel!: (l: string) => void
+    function Parent() {
+      const [label, setL] = useState('v1')
+      setLabel = setL
+      return createElement(MFBridgeSSR, { loader, props: { label } })
+    }
+
+    const { findByTestId } = render(createElement(Parent))
+    const btn = await findByTestId('btn')
+    await act(async () => { btn.click(); btn.click(); btn.click() })
+    expect((await findByTestId('btn')).textContent).toBe('v1:3')
+
+    await act(async () => { setLabel('v2') })
+    expect((await findByTestId('btn')).textContent).toBe('v2:3')
+  })
+
   it('renders errorFallback when loader rejects', async () => {
     const { findByTestId } = render(
       createElement(MFBridgeSSR, {

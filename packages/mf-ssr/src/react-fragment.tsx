@@ -1,5 +1,12 @@
 import { createElement, type ComponentType } from 'react'
-import { renderToReadableStream } from 'react-dom/server'
+// Import the Web Streams build explicitly. The bare `react-dom/server` specifier
+// resolves to the CommonJS Node build under Node's `node` export condition, and
+// that build does NOT export `renderToReadableStream` — so `createMFReactFragment`
+// throws a "Named export not found" SyntaxError at import time on Node runtimes
+// (including Next.js Route Handlers on the default Node runtime). The `.browser`
+// build exposes the Web Streams API and runs on any runtime with a global
+// `ReadableStream`: Node 18+, Deno, Bun, Cloudflare Workers, and other edges.
+import { renderToReadableStream } from 'react-dom/server.browser'
 import type { MFFragmentHandler } from './types.js'
 import { safeJsonStringify } from './utils.js'
 
