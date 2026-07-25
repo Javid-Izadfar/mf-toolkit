@@ -7,6 +7,42 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.2.0] — 2026-07-24
+
+### Added
+
+- **`onLoad` / `onStatusChange` on `MFBridgeSSR`.** Observe the client load
+  lifecycle: `onStatusChange` fires `'loading'` → `'ready'` (or `'error'`) and
+  `onLoad` fires once when the remote is ready. Drives spinners, metrics, or a
+  status store. Works in both loader and url mode.
+
+- **`retryCount` / `retryDelay` for loader mode.** Previously url-mode only. A
+  failing or slow dynamic import (CDN chunk) is now retried up to `retryCount`
+  times, each attempt bounded by `timeout`, `retryDelay` ms apart.
+
+- **`ttl` for url mode.** Cap how long a fetched fragment stays cached, in
+  milliseconds. After the window the next render re-fetches — for long-lived
+  SSR/edge servers serving public, periodically-changing fragments. Default is
+  unchanged (never expires; LRU capacity + `clearFragmentCache` still apply).
+
+- **`hydrateRemote` returns a teardown.** It now returns a function that
+  unmounts every root it hydrated — call it on a client-side route change or
+  when the fragments are removed from the DOM. Symmetric with `hydrateWithBridge`.
+  Ignoring the return value preserves existing behaviour.
+
+### Fixed
+
+- **Streamed render errors are no longer swallowed.** `createMFReactFragment`
+  only reported errors thrown *before* the first flush. Errors thrown after the
+  shell flushed — inside a streamed Suspense boundary — are now surfaced through
+  `onError` (the already-sent shell still cannot become a `500`).
+
+- **Fragment cache is a true LRU.** Eviction dropped the oldest *inserted* entry
+  (FIFO); an accessed entry now moves to the most-recently-used end, so a hot
+  fragment is not evicted before genuinely stale ones.
+
+---
+
 ## [1.1.1] — 2026-07-24
 
 ### Fixed
