@@ -43,7 +43,13 @@ export function analyzeFederation(
     };
   }
 
-  const alwaysShared = new Set(options?.alwaysShared ?? DEFAULT_ALWAYS_SHARED);
+  // Extend (not replace) the built-in list, matching mergePolicy() on the
+  // project side — passing a custom alwaysShared must not silently drop the
+  // react/react-dom protection and produce false hostGaps for them.
+  const alwaysShared = new Set<string>(DEFAULT_ALWAYS_SHARED);
+  if (options?.alwaysShared) {
+    for (const pkg of options.alwaysShared) alwaysShared.add(pkg);
+  }
 
   // ── Index manifests ────────────────────────────────────────────────────────
 

@@ -125,7 +125,7 @@ export interface ProjectManifest {
   };
 
   versions: {
-    /** From package.json dependencies + devDependencies */
+    /** From package.json dependencies, devDependencies, peerDependencies, and optionalDependencies */
     declared: Record<string, string>;
     /**
      * From node_modules/<pkg>/package.json.

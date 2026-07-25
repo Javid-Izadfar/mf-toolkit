@@ -22,46 +22,97 @@ export interface ResolvedTsConfigPaths {
   }>;
 }
 
+// ─── JSONC + extends resolution ───────────────────────────────────────────────
+
+/** Strip comments and trailing commas so JSON.parse accepts a tsconfig (JSONC). */
+function stripJsonc(input: string): string {
+  return input
+    .replace(/\/\*[\s\S]*?\*\//g, '')       // block comments
+    .replace(/(^|[^:"'])\/\/[^\n]*/g, '$1')  // line comments (keep http:// in strings)
+    .replace(/,(\s*[}\]])/g, '$1');          // trailing commas
+}
+
+interface RawTsConfig {
+  extends?: string | string[];
+  compilerOptions?: { baseUrl?: unknown; paths?: unknown };
+}
+
+function readRawTsConfig(path: string): RawTsConfig | null {
+  if (!existsSync(path)) return null;
+  let raw: string;
+  try { raw = readFileSync(path, 'utf-8'); } catch { return null; }
+  try { return JSON.parse(stripJsonc(raw)) as RawTsConfig; } catch { return null; }
+}
+
+/** Resolve an `extends` specifier to a concrete tsconfig file path, or null. */
+function resolveExtends(spec: string, fromDir: string): string | null {
+  const base = spec.startsWith('.')
+    ? resolve(fromDir, spec)
+    : join(fromDir, 'node_modules', spec); // bare specifier → node_modules (best effort)
+  const candidates = [base, `${base}.json`, join(base, 'tsconfig.json')];
+  return candidates.find((c) => c.endsWith('.json') && existsSync(c)) ?? null;
+}
+
+interface EffectiveConfig {
+  baseUrl?: string;
+  baseUrlDir?: string; // dir of the tsconfig that set baseUrl
+  paths?: Record<string, string[]>;
+  pathsDir?: string;   // dir of the tsconfig that set paths
+}
+
+/** Walk the `extends` chain (parents first) and merge with child-wins semantics. */
+function collectEffective(tsconfigPath: string, seen: Set<string>): EffectiveConfig {
+  const abs = resolve(tsconfigPath);
+  if (seen.has(abs)) return {}; // cycle guard
+  seen.add(abs);
+
+  const config = readRawTsConfig(abs);
+  if (!config) return {};
+  const dir = dirname(abs);
+
+  let eff: EffectiveConfig = {};
+
+  const ext = config.extends;
+  const parents = Array.isArray(ext) ? ext : ext ? [ext] : [];
+  for (const parent of parents) {
+    const parentPath = resolveExtends(parent, dir);
+    if (parentPath) eff = { ...eff, ...collectEffective(parentPath, seen) };
+  }
+
+  // This file overrides its parents.
+  const co = config.compilerOptions;
+  if (co && typeof co.baseUrl === 'string') { eff.baseUrl = co.baseUrl; eff.baseUrlDir = dir; }
+  if (co && co.paths && typeof co.paths === 'object') {
+    eff.paths = co.paths as Record<string, string[]>;
+    eff.pathsDir = dir;
+  }
+  return eff;
+}
+
 /**
- * Loads tsconfig.json and extracts path alias mappings.
- * Returns null when tsconfig is absent, unreadable, or has no paths defined.
+ * Loads tsconfig.json and extracts path alias mappings. Supports JSONC
+ * (block/line comments, trailing commas) and `extends` chains (relative and
+ * best-effort node_modules), so monorepo tsconfigs that keep `paths` in a shared
+ * base config resolve correctly. Returns null when tsconfig is absent,
+ * unreadable, or defines no usable wildcard aliases.
  *
  * Only handles the common `"alias/*": ["dir/*"]` wildcard pattern.
  * Exact aliases (no wildcard) are not currently supported.
  */
 export function loadTsConfigPaths(tsconfigPath: string): ResolvedTsConfigPaths | null {
-  if (!existsSync(tsconfigPath)) return null;
+  const eff = collectEffective(tsconfigPath, new Set());
+  if (!eff.paths) return null;
 
-  let raw: string;
-  try {
-    raw = readFileSync(tsconfigPath, 'utf-8');
-  } catch {
-    return null;
-  }
-
-  // Strip single-line comments so JSON.parse can handle tsconfig files
-  const stripped = raw.replace(/\/\/[^\n]*/g, '');
-  let config: Record<string, unknown>;
-  try {
-    config = JSON.parse(stripped) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-
-  const compilerOptions = config['compilerOptions'] as Record<string, unknown> | undefined;
-  if (!compilerOptions) return null;
-
-  const tsconfigDir = dirname(resolve(tsconfigPath));
-  const baseUrl = typeof compilerOptions['baseUrl'] === 'string'
-    ? resolve(tsconfigDir, compilerOptions['baseUrl'])
-    : tsconfigDir;
-
-  const rawPaths = compilerOptions['paths'] as Record<string, string[]> | undefined;
-  if (!rawPaths || typeof rawPaths !== 'object') return null;
+  const fallbackDir = dirname(resolve(tsconfigPath));
+  // baseUrl resolves against the file that set it; path roots resolve against
+  // baseUrl when present, otherwise against the file that set `paths`.
+  const baseDir = eff.baseUrl
+    ? resolve(eff.baseUrlDir ?? fallbackDir, eff.baseUrl)
+    : (eff.pathsDir ?? fallbackDir);
 
   const aliases: ResolvedTsConfigPaths['aliases'] = [];
 
-  for (const [aliasPattern, mappings] of Object.entries(rawPaths)) {
+  for (const [aliasPattern, mappings] of Object.entries(eff.paths)) {
     // Only handle wildcard aliases: "@alias/*" → ["dir/*"]
     if (!aliasPattern.endsWith('/*')) continue;
     if (!Array.isArray(mappings) || mappings.length === 0) continue;
@@ -69,7 +120,7 @@ export function loadTsConfigPaths(tsconfigPath: string): ResolvedTsConfigPaths |
     const prefix = aliasPattern.slice(0, -1); // "@alias/" (remove trailing *)
     const roots = mappings
       .filter((m): m is string => typeof m === 'string' && m.endsWith('/*'))
-      .map((m) => join(baseUrl, m.slice(0, -1))); // resolve to absolute, remove trailing *
+      .map((m) => join(baseDir, m.slice(0, -1))); // resolve to absolute, remove trailing *
 
     if (roots.length > 0) {
       aliases.push({ pattern: prefix, roots });
@@ -78,7 +129,7 @@ export function loadTsConfigPaths(tsconfigPath: string): ResolvedTsConfigPaths |
 
   if (aliases.length === 0) return null;
 
-  return { baseDir: baseUrl, aliases };
+  return { baseDir, aliases };
 }
 
 /**

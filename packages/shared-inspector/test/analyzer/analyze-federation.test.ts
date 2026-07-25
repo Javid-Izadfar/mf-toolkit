@@ -25,6 +25,31 @@ function makeManifest(
   };
 }
 
+// ─── alwaysShared merge semantics ─────────────────────────────────────────────
+
+describe('analyzeFederation — alwaysShared merge', () => {
+  it('extends (not replaces) the built-in list: a custom alwaysShared keeps react protected', () => {
+    // Both MFs use react but neither shares it → react would be a hostGap unless
+    // protected by alwaysShared. Passing a custom list must not drop the default
+    // react/react-dom protection (regression: it used to replace the defaults).
+    const a = makeManifest('a', {}, ['react', 'my-lib']);
+    const b = makeManifest('b', {}, ['react', 'my-lib']);
+    const gaps = analyzeFederation([a, b], { alwaysShared: ['my-lib'] })
+      .hostGaps.map((g) => g.package);
+    expect(gaps).not.toContain('react');   // still protected by the default
+    expect(gaps).not.toContain('my-lib');  // protected by the custom addition
+  });
+
+  it('the custom alwaysShared entry actually protects (sanity: it is a gap without it)', () => {
+    const a = makeManifest('a', {}, ['my-lib']);
+    const b = makeManifest('b', {}, ['my-lib']);
+    expect(analyzeFederation([a, b]).hostGaps.map((g) => g.package)).toContain('my-lib');
+    expect(
+      analyzeFederation([a, b], { alwaysShared: ['my-lib'] }).hostGaps.map((g) => g.package),
+    ).not.toContain('my-lib');
+  });
+});
+
 // ─── Ghost shares ─────────────────────────────────────────────────────────────
 
 describe('analyzeFederation — ghost shares', () => {

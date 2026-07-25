@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 
 export interface ResolvedVersions {
-  /** Versions from package.json dependencies + devDependencies */
+  /** Versions from package.json dependencies, devDependencies, peerDependencies, and optionalDependencies */
   declared: Record<string, string>;
   /**
    * Versions from node_modules/<pkg>/package.json.
@@ -40,8 +40,14 @@ async function readDeclaredVersions(packageJsonPath: string): Promise<Record<str
 
   const deps = (pkg['dependencies'] ?? {}) as Record<string, string>;
   const devDeps = (pkg['devDependencies'] ?? {}) as Record<string, string>;
+  const peerDeps = (pkg['peerDependencies'] ?? {}) as Record<string, string>;
+  const optDeps = (pkg['optionalDependencies'] ?? {}) as Record<string, string>;
 
-  return { ...deps, ...devDeps };
+  // peer/optional first so an explicit dependencies/devDependencies range wins
+  // when a package appears in more than one field. Including peer deps matters
+  // for library-style remotes that declare react et al. as peers only — without
+  // this, their installed version is never looked up and mismatch is skipped.
+  return { ...peerDeps, ...optDeps, ...deps, ...devDeps };
 }
 
 async function readInstalledVersions(

@@ -23,7 +23,10 @@ export async function scanFiles(dirs: string[], extensions: string[]): Promise<s
       for (const entry of entries) {
         if (typeof entry !== 'string') continue;
         if (!extensions.includes(extname(entry))) continue;
-        if (entry.split('/').some((seg) => IGNORED_DIRS.includes(seg))) continue;
+        // Split on both separators — recursive readdir returns backslash paths
+        // on Windows, so splitting on '/' alone would never match nested
+        // node_modules/dist/build segments there.
+        if (entry.split(/[\\/]/).some((seg) => IGNORED_DIRS.includes(seg))) continue;
         files.push(join(dir, entry));
       }
     } catch {

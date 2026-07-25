@@ -1,8 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolveVersions } from '../../src/collector/resolve-versions.js';
 
 const FIXTURES = join(import.meta.dirname, '../fixtures');
+
+function tmpPackageJson(pkg: object): string {
+  const dir = mkdtempSync(join(tmpdir(), 'si-versions-'));
+  const path = join(dir, 'package.json');
+  writeFileSync(path, JSON.stringify(pkg));
+  return path;
+}
 
 describe('resolveVersions — declared versions', () => {
   it('reads dependencies from package.json', async () => {
@@ -36,6 +45,37 @@ describe('resolveVersions — declared versions', () => {
     expect(Object.keys(declared)).toContain('react-dom');
     expect(Object.keys(declared)).toContain('mobx');
     expect(Object.keys(declared)).toContain('typescript');
+  });
+
+  it('includes peerDependencies and optionalDependencies in declared', async () => {
+    // Library-style remotes declare react as a peer only — it must still be
+    // read so its installed version is looked up and mismatch can be detected.
+    const path = tmpPackageJson({
+      dependencies: { axios: '^1.0.0' },
+      peerDependencies: { react: '^18.0.0' },
+      optionalDependencies: { fsevents: '^2.3.0' },
+    });
+    try {
+      const { declared } = await resolveVersions(path);
+      expect(declared['react']).toBe('^18.0.0');   // peer
+      expect(declared['fsevents']).toBe('^2.3.0'); // optional
+      expect(declared['axios']).toBe('^1.0.0');    // dep
+    } finally {
+      rmSync(join(path, '..'), { recursive: true, force: true });
+    }
+  });
+
+  it('a dependencies range wins over a peerDependencies range for the same package', async () => {
+    const path = tmpPackageJson({
+      peerDependencies: { react: '^17.0.0' },
+      dependencies: { react: '^18.2.0' },
+    });
+    try {
+      const { declared } = await resolveVersions(path);
+      expect(declared['react']).toBe('^18.2.0');
+    } finally {
+      rmSync(join(path, '..'), { recursive: true, force: true });
+    }
   });
 });
 
