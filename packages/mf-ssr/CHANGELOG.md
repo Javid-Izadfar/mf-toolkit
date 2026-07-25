@@ -7,6 +7,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.1.1] — 2026-07-24
+
+### Fixed
+
+- **`createMFReactFragment` now works on the Node runtime.** The handler imported
+  `renderToReadableStream` from `react-dom/server`, which resolves to the
+  CommonJS Node build under Node's export condition — and that build does not
+  export `renderToReadableStream` (the Web Streams API lives in the `.browser` /
+  edge build). The result was a `Named export 'renderToReadableStream' not found`
+  SyntaxError at **import time** on every Node runtime, including Next.js Route
+  Handlers on the default (Node) runtime. The fragment now imports the Web
+  Streams build (`react-dom/server.browser`), which runs on any runtime with a
+  global `ReadableStream`: Node 18+, Deno, Bun, Cloudflare Workers, and edges.
+  No API change.
+
+### Added
+
+- **`examples/playground/`** — a dev-only Node SSR harness (a real
+  `createMFReactFragment` endpoint + `MFBridgeSSR` url-mode host render + client
+  `hydrateWithBridge` and prop streaming) that exercises the full
+  server → hydrate → stream path in a real browser. Run with `npm run playground`.
+  Excluded from the `tsc` build and the published package.
+
+---
+
 ## [1.1.0] — 2026-06-18
 
 ### Added
