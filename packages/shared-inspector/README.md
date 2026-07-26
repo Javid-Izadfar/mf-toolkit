@@ -450,6 +450,8 @@ await buildProjectManifest({
 
 Without `tsconfigPath`, `@components/Button` is treated as an external package and packages imported inside it are invisible in `local-graph` mode.
 
+`extends` chains are followed (relative and `node_modules` specifiers, with cycle protection), so a monorepo tsconfig that keeps `paths` in a shared base config resolves correctly. JSONC is tolerated too — block/line comments and trailing commas. Only wildcard aliases (`"@alias/*"`) are supported; exact aliases are not.
+
 ## Interactive wizard
 
 Not sure which flags to pass? Run the step-by-step wizard:
@@ -601,7 +603,7 @@ Four steps, no magic:
 
 1. **Scan** — statically extracts import/require statements from source files, preserving subpath specifiers (`lodash/cloneDeep`) so deep-import bypass becomes detectable
 2. **Normalize** — reads your declared `shared` config (explicit or auto-extracted from `ModuleFederationPlugin`)
-3. **Resolve** — reads installed versions from `node_modules` to detect `requiredVersion` drift
+3. **Resolve** — reads installed versions from `node_modules` (walking up for hoisted monorepos) and declared versions from all four `package.json` dependency fields — including `peerDependencies`, the standard for library-style remotes — to detect `requiredVersion` drift
 4. **Cross-reference** — produces findings, a risk score, and optionally a `project-manifest.json` for federation analysis
 
 For federation analysis the tool also accepts MF 2.0 `mf-manifest.json` directly, so cross-team checks work against build artefacts without integrating any plugin.

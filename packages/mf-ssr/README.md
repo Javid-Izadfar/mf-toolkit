@@ -252,8 +252,11 @@ Client-boundary component that renders a remote MF during SSR and keeps it in sy
 | `commandRef` | `{ current: (type, payload?) => void \| null }` | url mode | Populated with a `send` function for imperative commands |
 | `fetchOptions` | `Omit<RequestInit, 'signal'>` | url mode | Extra options forwarded to `fetch()` — auth headers, cookies, tracing headers, etc. |
 | `cacheKey` | `string` | url mode | Per-user cache-slot suffix — required when `fetchOptions` carries auth so users don't share cached HTML |
-| `retryCount` | `number` | url mode | Extra fetch attempts after the first failure, default `0` |
-| `retryDelay` | `number` | url mode | Milliseconds between retry attempts, default `1000` |
+| `retryCount` | `number` | both | Extra load attempts after the first failure, default `0` — url mode retries the fetch, loader mode retries the import |
+| `retryDelay` | `number` | both | Milliseconds between retry attempts, default `1000` |
+| `ttl` | `number` | url mode | Cache TTL for the fetched fragment HTML, in ms. After the window the next render re-fetches. Default: never expires (LRU capacity + `clearFragmentCache` still apply) |
+| `onLoad` | `() => void` | both | Called once when the remote has loaded and is ready on the client |
+| `onStatusChange` | `(status: 'loading' \| 'ready' \| 'error') => void` | both | Fires on every load-status transition — drive spinners, metrics, or a store |
 
 ---
 
@@ -264,14 +267,16 @@ Client-boundary component that renders a remote MF during SSR and keeps it in sy
   url="https://checkout.acme.com/fragment"
   namespace="checkout"
   props={{ orderId }}
-  retryCount={2}          // 3 attempts total (1 + 2 retries)
+  retryCount={2}          // 3 attempts total (1 + 2 retries); works in loader mode too
   retryDelay={500}        // 500 ms pause between each
+  onStatusChange={(s) => dispatch({ type: 'MF_STATUS', status: s })}  // 'loading' → 'ready' | 'error'
+  onLoad={() => track('checkout_ready')}
   onError={(err) => captureException(err)}
   debug={process.env.NODE_ENV !== 'production'}
 />
 ```
 
-All retries happen inside the single Suspense promise — the fallback stays visible throughout. `onError` fires once, after all retries are exhausted. `errorFallback` then replaces the fallback in the DOM.
+All retries happen inside the single Suspense promise — the fallback stays visible throughout. `retryCount` / `retryDelay` apply to **both** modes (url mode retries the fetch, loader mode retries the dynamic import). `onStatusChange` reports every transition (`'loading'` → `'ready'` | `'error'`) and `onLoad` fires once when the remote is ready — use them for spinners, metrics, or a status store. `onError` fires once, after all retries are exhausted; `errorFallback` then replaces the fallback in the DOM.
 
 ---
 
@@ -394,7 +399,10 @@ Use `hydrateWithBridge` when the host needs to stream prop changes, send command
 ```ts
 import { hydrateRemote } from '@mf-toolkit/mf-ssr/hydrate'
 
-hydrateRemote(MyComponent)
+// Returns a teardown that unmounts every root it hydrated — call it on a
+// client-side route change or when the fragments are removed from the DOM.
+// Ignoring the return value keeps the one-shot behaviour.
+const teardown = hydrateRemote(MyComponent)
 ```
 
 ---
