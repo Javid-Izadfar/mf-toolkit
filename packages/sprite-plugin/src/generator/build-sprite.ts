@@ -18,9 +18,22 @@ export interface IconSize {
  * Extracts the inner content and viewBox from an SVG string,
  * wrapping it as a <symbol> element.
  */
-function svgToSymbol(id: string, svg: string): SvgSymbol {
-  const viewBoxMatch = svg.match(/viewBox=["']([^"']+)["']/);
+function svgToSymbol(id: string, svg: string, symbolAttributes: string[]): SvgSymbol {
+  const rootMatch = svg.match(/<svg\b([^>]*)>/);
+  const rootAttributes = rootMatch?.[1] ?? '';
+  const viewBoxMatch = rootAttributes.match(/\sviewBox=["']([^"']+)["']/);
   const viewBox = viewBoxMatch ? viewBoxMatch[1] : '0 0 24 24';
+  const allowedAttributes = new Set(symbolAttributes);
+  const copiedAttributes = Array.from(rootAttributes.matchAll(
+    /\s+([^\s=/>]+)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)/g,
+  ))
+    .filter((match) => {
+      const name = match[1];
+      return allowedAttributes.has(name)
+        && !/^(?:id|viewBox|width|height|xmlns(?::[a-zA-Z][\w.-]*)?)$/.test(name);
+    })
+    .map((match) => match[0])
+    .join('');
 
   // Extract content between <svg> and </svg>
   let inner = svg
@@ -37,7 +50,7 @@ function svgToSymbol(id: string, svg: string): SvgSymbol {
     .replace(/href="#([^"]+)"/g, `href="#${safePrefix}$1"`)
     .replace(/xlink:href="#([^"]+)"/g, `xlink:href="#${safePrefix}$1"`);
 
-  const content = `<symbol id="${id}" viewBox="${viewBox}">${inner}</symbol>`;
+  const content = `<symbol id="${id}" viewBox="${viewBox}"${copiedAttributes}>${inner}</symbol>`;
   return { id, content };
 }
 
@@ -104,6 +117,7 @@ export async function buildSprite(
   iconNames: string[],
   verbose = false,
   svgoOptions?: SvgoOptions,
+  symbolAttributes: string[] = [],
 ): Promise<{ svg: string; included: string[]; missing: string[]; sizes: Map<string, IconSize> }> {
   // Deduplicate requested names
   const requestedNames = [...new Set(iconNames)];
@@ -180,7 +194,7 @@ export async function buildSprite(
     const raw = await readFile(filePath, 'utf-8');
     const originalBytes = Buffer.byteLength(raw, 'utf-8');
     const optimized = optimizeSvg(raw, true, svgoOptions);
-    const symbol = svgToSymbol(matchedId, optimized);
+    const symbol = svgToSymbol(matchedId, optimized, symbolAttributes);
     symbols.push(symbol);
     included.push(matchedId);
     sizes.set(matchedId, {

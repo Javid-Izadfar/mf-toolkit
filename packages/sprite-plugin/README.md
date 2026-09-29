@@ -296,6 +296,11 @@ interface SpritePluginOptions {
     plugins?: PluginConfig[];  // extra plugins appended after defaults
     multipass?: boolean;       // default: true
   };
+
+  // Root SVG attributes to copy onto each generated <symbol>.
+  // viewBox is always preserved; structural attributes such as id, width,
+  // height, and XML namespaces are always excluded. Default: []
+  symbolAttributes?: string[];
 }
 ```
 
@@ -341,6 +346,18 @@ Every SVG goes through [SVGO](https://github.com/svg/svgo) and additional proces
 | Colors inside `<style>` blocks | Also replaced with `currentColor` |
 | Redundant groups, empty elements | Removed |
 | Path data | Minified |
+
+Root `<svg>` attributes are not copied to generated `<symbol>` elements by default. Opt in to
+specific rendering attributes when needed:
+
+```ts
+mfSpriteVitePlugin({
+  // ...
+  symbolAttributes: ['fill', 'preserveAspectRatio'],
+});
+```
+
+`viewBox` is always preserved. `id`, `width`, `height`, and XML namespace attributes cannot be copied.
 
 The `currentColor` replacement means your icons automatically inherit the text color of their parent element. Set `color: red` on the parent — the icon turns red.
 

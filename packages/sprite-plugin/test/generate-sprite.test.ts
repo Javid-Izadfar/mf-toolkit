@@ -41,6 +41,20 @@ describe('generateSprite', () => {
     expect(content).toContain('"search"');
   });
 
+  it('copies configured root SVG attributes onto symbols', async () => {
+    await generateSprite({
+      iconsDir: join(FIXTURES, 'icons'),
+      sourceDirs: [join(FIXTURES, 'src')],
+      importPattern: /@my-ui\/icons\/(.+)/,
+      output: OUTPUT_FILE,
+      extensions: ['.tsx'],
+      symbolAttributes: ['fill'],
+    });
+
+    const content = await readFile(OUTPUT_FILE, 'utf-8');
+    expect(content).toContain('<symbol id="search" viewBox="0 0 24 24" fill="none">');
+  });
+
   it('creates output directory if not exists', async () => {
     const deepOutput = join(OUTPUT_DIR, 'deep/nested/sprite.ts');
 

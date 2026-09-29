@@ -38,6 +38,7 @@ export async function generateSprite(options: SpritePluginOptions): Promise<void
     manifest: writeManifest = false,
     parser,
     svgoOptions,
+    symbolAttributes,
   } = options;
 
   // Step 1: Find which icons are used in source code
@@ -66,7 +67,13 @@ export async function generateSprite(options: SpritePluginOptions): Promise<void
   }
 
   // Step 2: Build the sprite from matched SVG files
-  const { svg, included, missing, sizes } = await buildSprite(iconsDir, iconNames, verbose, svgoOptions);
+  const { svg, included, missing, sizes } = await buildSprite(
+    iconsDir,
+    iconNames,
+    verbose,
+    svgoOptions,
+    symbolAttributes,
+  );
 
   if (missing.length > 0) {
     console.warn(`[sprite] Missing icons: ${missing.join(', ')}`);

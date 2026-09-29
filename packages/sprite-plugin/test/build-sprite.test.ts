@@ -69,6 +69,34 @@ describe('buildSprite', () => {
     expect(result.svg).toContain('viewBox="0 0 24 24"');
   });
 
+  it('does not copy optional root SVG attributes by default', async () => {
+    const result = await buildSprite(ICONS_DIR, ['search']);
+
+    expect(result.svg).toContain('<symbol id="search" viewBox="0 0 24 24">');
+    expect(result.svg).not.toMatch(/<symbol[^>]+\sfill=/);
+  });
+
+  it('copies configured root SVG attributes onto the symbol', async () => {
+    const result = await buildSprite(ICONS_DIR, ['search'], false, undefined, ['fill']);
+
+    expect(result.svg).toContain(
+      '<symbol id="search" viewBox="0 0 24 24" fill="none">',
+    );
+  });
+
+  it('never copies structural root SVG attributes onto the symbol', async () => {
+    const result = await buildSprite(
+      ICONS_DIR,
+      ['search'],
+      false,
+      undefined,
+      ['id', 'viewBox', 'width', 'height', 'xmlns'],
+    );
+
+    expect(result.svg).toContain('<symbol id="search" viewBox="0 0 24 24">');
+    expect(result.svg).not.toMatch(/<symbol[^>]+(?:width|height|xmlns)=/);
+  });
+
   it('wraps each icon in a <symbol> element', async () => {
     const result = await buildSprite(ICONS_DIR, ['cart', 'search', 'star']);
 

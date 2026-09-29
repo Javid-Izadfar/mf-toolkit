@@ -99,6 +99,17 @@ export interface SpritePluginOptions {
     /** Run SVGO multiple passes until no further changes (default: true) */
     multipass?: boolean;
   };
+
+  /**
+   * Root SVG attributes to copy onto each generated <symbol>.
+   * viewBox is always preserved; id, width, height, and XML namespace
+   * attributes are always excluded.
+   * @default []
+   *
+   * @example
+   * symbolAttributes: ['fill', 'preserveAspectRatio']
+   */
+  symbolAttributes?: string[];
 }
 
 export interface AnalyzerOptions {
